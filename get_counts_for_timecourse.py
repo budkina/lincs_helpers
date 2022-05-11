@@ -4,25 +4,29 @@ import pkg_resources
 import pandas as pd
 from cmapPy.pandasGEXpress.parse import parse
 import multiprocessing as mp
+import random
+from random import sample
 
-def save_counts(counts, comp_insts_filtered):
+def save_counts(counts, comp_insts_filtered, control_insts_filtered, sample_num):
     for comp_id in comp_insts_filtered:
         counts_df = pd.DataFrame()
         with open(os.path.join(args.output,comp_id),'w') as f:
             samples = comp_insts_filtered[comp_id]
+            comp_sample_num = len(samples)
             for inst_time in samples:
                 inst = inst_time[0]
                 time = inst_time[1]
-                f.write(f"{inst}\t{time}\n")
+                f.write(f"{inst}\tcp\t{time}\n")
                 counts_df[inst] = counts[inst]
-            cell_id = comp_id.split('_')[1]
-            for control_comp_id in contol_insts:
-                if control_comp_id != cell_id:
-                    continue
-
-                for control in contol_insts[control_comp_id]:
-                    f.write(f"{control}\t0\n")
-                    counts_df[control] = counts[control]
+            samples = control_insts_filtered[comp_id]
+            for i in range(sample_num):
+                if comp_sample_num < len(samples):
+                    samples = random.sample(samples, comp_sample_num)
+            for inst_time in samples:
+                inst = inst_time[0]
+                time = inst_time[1]
+                f.write(f"{inst}\tcontrol\t{time}\n")           
+                counts_df[inst] = counts[inst]
         counts_df['index'] = counts.index
         counts_df = counts_df.set_index('index')
         counts_df.to_csv(os.path.join(args.output, f"{comp_id}_counts.csv"), sep = '\t', header = True)
@@ -35,6 +39,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--data', help='LINCS data directory')
 parser.add_argument('--output', help='Output directory')
 parser.add_argument('--cores_num', type = int, help='Number of processes')
+parser.add_argument('--all_dmso', help='Use all DMSO from RNA plate, default disabled', action='store_true')
 
 args = parser.parse_args()
 
@@ -59,54 +64,62 @@ counts = pd.DataFrame(data=level2_epsilon.data_df,
     index=level2_epsilon.row_metadata_df.index,
     columns=level2_epsilon.col_metadata_df.index)
 
+controls = inst_info[inst_info['pert_id'] == 'DMSO']
+compounds = inst_info[inst_info['pert_type'] == 'trt_cp']
+compounds_with_dmso = pd.DataFrame(columns = compounds.columns)
+used_rna_plates =set()
+for inst_id, inst in controls.iterrows():
+    rna_plate  = inst['rna_plate']
+    if rna_plate in used_rna_plates:
+        continue
+    compounds_with_dmso = compounds_with_dmso.append(compounds[compounds['rna_plate'] == rna_plate])
+    used_rna_plates.add(rna_plate)
+
 comp_insts = {}
 contol_insts = {}
-
 # get perturbation times and controls
-for inst_id, inst in inst_info.iterrows():
-
+for inst_id, inst in compounds_with_dmso.iterrows():
     if inst_id not in counts.columns:
         continue
-
-    pert_type = inst['pert_type']
-
-    # get only trt_cp data
-    if pert_type != 'trt_cp' and pert_type != 'ctl_vehicle':
-        continue
-
     pert_id = inst['pert_id']
     cell_id = inst['cell_id']
-    if pert_type == 'trt_cp':
-        pert_dose = inst['pert_dose']
-        comp_id = f'{pert_id}_{cell_id}_{pert_dose}'
-
-        if comp_id not in comp_insts:
-            comp_insts[comp_id] = []
-        pert_time = inst['pert_time']
-        comp_insts[comp_id].append((inst_id, pert_time))
-
-    if pert_type == 'ctl_vehicle':
-        if cell_id not in contol_insts:
-            contol_insts[cell_id] = []
-        contol_insts[cell_id].append(inst_id)
+    pert_time = inst['pert_time']
+    pert_dose = inst['pert_dose']
+    rna_plate = inst['rna_plate']
+    comp_id = f'{pert_id}_{cell_id}_{pert_dose}'
+    if comp_id not in comp_insts:
+        comp_insts[comp_id] = set()
+    if comp_id not in contol_insts:
+        contol_insts[comp_id] = set()
+    comp_insts[comp_id].add((inst_id, pert_time))
+    dmso_same_rna_plate = controls[controls['rna_plate'] == rna_plate]
+    contol_inst_id = list(dmso_same_rna_plate.index)
+    control_pert_time = dmso_same_rna_plate['pert_time']
+    contol_insts[comp_id].update(list(zip(contol_inst_id, control_pert_time)))
 
 # filter compounds with more than 2 time conditions
 comp_insts_filtered = {}
+contol_insts_filtered = {}
 for comp_id in comp_insts:
-    samples = comp_insts[comp_id]
-    times = set(list(zip(*samples))[1])
-    if len(times) > 1:
-        comp_insts_filtered[comp_id] = samples
+    comp_samples = comp_insts[comp_id]
+    comp_times = set(list(zip(*comp_samples))[1])
+    control_samples = contol_insts[comp_id]
+    control_times = set(list(zip(*control_samples))[1])
+    if len(comp_times) > 1 and len(control_times) > 1:
+        comp_insts_filtered[comp_id] = comp_samples
+        contol_insts_filtered[comp_id] = control_samples
 
 pool = mp.Pool(args.cores_num)
 jobs = []
 list_split = list(split(list(comp_insts_filtered.keys()), args.cores_num))
 for comp_list in list_split:
     comp_insts_chunk = {}
+    control_insts_chunk = {}
     for comp_id in comp_list:
         comp_insts_chunk[comp_id] = comp_insts_filtered[comp_id]
+        control_insts_chunk[comp_id] = contol_insts_filtered[comp_id]
 
-    job = pool.apply_async(save_counts, (counts, comp_insts_chunk,))
+    job = pool.apply_async(save_counts, (counts, comp_insts_chunk, control_insts_chunk, sample_num,))
     jobs.append(job)
 
 for job in jobs: 
