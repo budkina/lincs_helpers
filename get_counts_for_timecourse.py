@@ -31,6 +31,7 @@ def count_samples_per_time(insts):
     return insts_num
 
 def save_counts(counts, comp_insts, control_insts, sample_num, output_folder):
+    comp_id_list = []
     for comp_id in comp_insts:
         # get compounds data
         comp_samples = comp_insts[comp_id]
@@ -61,19 +62,25 @@ def save_counts(counts, comp_insts, control_insts, sample_num, output_folder):
                 # write compound to design matrix
                 for inst_time in comp_samples:
                     inst = inst_time[0]
+                    counts_df[inst] = counts[inst]
+                    inst = '.'.join(inst.split(':'))
                     time = inst_time[1]
                     f.write(f"{inst}\tcp\t{time}\t{i}\n")
-                    counts_df[inst] = counts[inst]
                 # write control to design matrix
                 for inst_time in sample:
                     inst = inst_time[0]
+                    counts_df[inst] = counts[inst]
+                    inst = '.'.join(inst.split(':'))
                     time = inst_time[1]
                     f.write(f"{inst}\tcontrol\t{time}\t{i}\n")
-                    counts_df[inst] = counts[inst]
         # write counts
         counts_df['index'] = counts.index
         counts_df = counts_df.set_index('index')
         counts_df.to_csv(os.path.join(output_folder, f"{comp_id}_counts.csv"), sep = '\t', header = True)
+        comp_id_list.append(comp_id)
+    comp_id_df = pd.DataFrame({'comp_ids':comp_id_list})
+    comp_id_df.to_csv(os.path.join(output_folder, f"comp_ids.csv"), sep = '\t', header = True)
+
 
 def split(a, n):
     k, m = divmod(len(a), n)
