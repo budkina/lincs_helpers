@@ -7,6 +7,8 @@ library(doParallel)
 option_list = list(
     make_option(c("-i", "--input"), type="character", default=NULL,
         help="Input directory with counts", metavar="character"),
+    make_option(c("-d", "--data"), type="character", default=NULL,
+        help="Data directory with cmap data", metavar="character"),
     make_option(c("-c", "--cores"), type="integer", default=16,
         help="Number of cores"),
     make_option(c("-o", "--output"), type="character", default=NULL,
@@ -20,6 +22,11 @@ if (is.null(opt$input)){
     stop("Input directory should be supplied", call.=FALSE)
 }
 
+if (is.null(opt$data)){
+    print_help(opt_parser)
+    stop("Input directory should be supplied", call.=FALSE)
+}
+
 if (is.null(opt$output)){
     print_help(opt_parser)
     stop("Output directory should be supplied", call.=FALSE)
@@ -28,13 +35,26 @@ if (is.null(opt$output)){
 registerDoParallel(opt$cores)
 comp_ids <- read.csv(paste0(opt$input,"/","comp_ids.csv"), header = T, sep = '\t')
 ids <- as.vector(comp_ids$comp_ids)
+gene_info <- read.csv(paste0(opt$data,"/", "GSE92742_Broad_LINCS_gene_info.txt", sep = '\t')
+rownames(gene_info) <- gene_info$pr_gene_id 
+signature_filenames <- c()
+comp_ids <- c()
+pert_id <- c()
+pert_iname <- c()
+cell_id <- c()
+pert_dose <- c()
+
 foreach(i = 1:length(ids), .combine = "c") %dopar% 
 {
 	f <- ids[i]
+	pert_id <- as.vector(comp_ids$pert_id)[i]
+	pert_iname <- as.vector(comp_ids$pert_iname)[i]
+	cell_id <- as.vector(comp_ids$cell_id)[i]
+	pert_dose <- as.vector(comp_ids$pert_dose)[i]
 	design_table <- read.table(paste0(opt$input,"/",f), header = F, sep = '\t')
 	counts_table <- read.table(paste0(opt$input,"/",f,"_counts.csv"), header = T, sep = '\t', row.names = 1)
-
-	for (j in 0:9)
+	sample_num <- unique(design_table$V4)
+	for (j in sample_num)
 	{
 		design_table_sample <- design_table[design_table$V4 == j,]
 		if (dim(design_table_sample)[1] == 0) {
@@ -53,7 +73,18 @@ foreach(i = 1:length(ids), .combine = "c") %dopar%
 		fit <- eBayes(fit2)
 		top_table <- topTable(fit, n = Inf)
 		result <-top_table[which(top_table$adj.P.Val < 0.05),]
-		write.table(result, paste0(opt$output,"/", f, "_limma_de_sample_controls_",j,".csv"), sep = '\t',  quote = F,  row.names = T)
-
+		result$gene_name <- gene_info[rownames(result),]$pr_gene_symbol
+		signature_filename <- paste0(f, "_limma_de_sample_controls_",j,".csv")
+		write.table(result, paste0(opt$output,"/", signature_filename), sep = '\t',  quote = F,  row.names = T)
+		signature_filenames <- c(signature_filenames, signature_filename)
+		as.vector(comp_ids$comp_ids)
+		comp_ids <- c(comp_ids, f)
+		pert_ids <- c(pert_ids, pert_id)
+		pert_inames <- c(pert_inames, pert_iname)
+		cell_ids <- c(cell_ids, cell_id)
+		pert_doses <- c(pert_doses, pert_dose)
 	}
 }
+
+summary <- data.frame(signature_filenames, comp_ids, pert_ids, pert_inames, cell_ids, pert_doses)
+write.table(result, paste0(opt$output,"/summary.csv"), sep = '\t',  quote = F,  row.names = T)
