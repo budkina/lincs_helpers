@@ -19,16 +19,17 @@ def get_compound_items(compounds, counts):
         if (pert_time != 6) and (pert_time !=24):
             continue
         pert_dose = inst['pert_dose']
+        rna_plate = inst['rna_plate']
         comp_item = f'{pert_id}_{cell_id}_{pert_dose}'
         if comp_item not in comp_items:
             comp_items[comp_item] = set()
         # add compound instances
-        comp_items[comp_item].add((inst_id, pert_time))
+        comp_items[comp_item].add((inst_id, pert_time, rna_plate))
     return comp_items
 
 def count_samples_per_time(insts):
     insts_num = {}
-    for (inst_id, pert_time) in insts:
+    for (inst_id, pert_time, rna_plate) in insts:
         if pert_time not in insts_num:
             insts_num[pert_time] = 0
         insts_num[pert_time] +=1
@@ -48,9 +49,9 @@ def filter_samples(items, samples_per_time):
                 times_to_remove.append(time)
         # remove times without samples_per_time number of instances
         item_insts_filtered = set()
-        for (inst_id, pert_time) in item_insts:
+        for (inst_id, pert_time, rna_plate) in item_insts:
             if pert_time not in times_to_remove:
-                item_insts_filtered.add((inst_id, pert_time))
+                item_insts_filtered.add((inst_id, pert_time, rna_plate))
         if not item_insts_filtered:
             continue
         # check if several timepoints present
@@ -60,19 +61,18 @@ def filter_samples(items, samples_per_time):
         items_filtered[item] = item_insts_filtered
     return items_filtered
 
-def get_controls(comp_items, compounds, controls, counts):
+def get_controls(comp_items, controls, counts):
     # get all controls from the same rna plate
     control_items = {}
     for comp_item in comp_items:
-        for (inst_id, pert_time) in comp_items[comp_item]:
-            inst = compounds.loc[inst_id,]
-            rna_plate = inst['rna_plate']
+        for (inst_id, pert_time, rna_plate) in comp_items[comp_item]:
             dmso_same_rna_plate = controls[controls['rna_plate'] == rna_plate]
             contol_inst_ids = list(dmso_same_rna_plate.index)
             if comp_item not in control_items:
                 control_items[comp_item] = set()
             control_pert_time = dmso_same_rna_plate['pert_time']
-            control_items[comp_item].update(list(zip(contol_inst_ids, control_pert_time)))
+            control_pert_rna_plate = dmso_same_rna_plate['rna_plate']
+            control_items[comp_item].update(list(zip(contol_inst_ids, control_pert_time, control_pert_rna_plate)))
     return control_items
 
 def get_compounds_with_dmso(comp_items, control_items):
@@ -108,7 +108,12 @@ def save_counts_parallel(data_folder,
         for item in comp_list:
             comp_items_chunk[item] = comp_items[item]
             control_items_chunk[item] = control_items[item]
-        job = pool.apply_async(save_counts, (counts, comp_items_chunk, control_items_chunk, control_select_type, sample_num, output_folder,))
+        job = pool.apply_async(save_counts, (counts,
+            comp_items_chunk,
+            control_items_chunk,
+            control_select_type,
+            sample_num,
+            output_folder,))
         jobs.append(job)
     for job in jobs: 
         job.get()
@@ -117,10 +122,10 @@ def save_counts_parallel(data_folder,
 
 def arrange_samples_per_time(insts):
     insts_per_time = {}
-    for (inst_id, pert_time) in insts:
+    for (inst_id, pert_time, rna_plate) in insts:
         if pert_time not in insts_per_time:
             insts_per_time[pert_time] = []
-        insts_per_time[pert_time].append((inst_id, pert_time))
+        insts_per_time[pert_time].append((inst_id, pert_time, rna_plate))
     return insts_per_time
 
 def random_sample_controls(control_insts, comp_insts, sample_num):
@@ -143,14 +148,14 @@ def write_counts(item, control_insts, comp_insts, counts, output_folder):
     counts_df = pd.DataFrame()
     with open(os.path.join(output_folder,f"{item}"),'w') as f:
         # write compound to design matrix
-        for (inst_id, pert_time) in comp_insts:
+        for (inst_id, pert_time, rna_plate) in comp_insts:
             inst_id_fixed = '.'.join(inst_id.split(':'))
-            f.write(f"{inst_id_fixed}\tcp\t{pert_time}\t0\n")
+            f.write(f"{inst_id_fixed}\tcp\t{pert_time}\t{rna_plate}\t0\n")
             counts_df[inst_id_fixed] = counts[inst_id]
         # write control to design matrix
-        for (inst_id, pert_time) in control_insts:
+        for (inst_id, pert_time,  rna_plate) in control_insts:
             inst_id_fixed = '.'.join(inst_id.split(':'))
-            f.write(f"{inst_id_fixed}\tcontrol\t{pert_time}\t0\n")
+            f.write(f"{inst_id_fixed}\tcontrol\t{pert_time}\t{rna_plate}\t0\n")
             counts_df[inst_id_fixed] = counts[inst_id]
         # write counts
         counts_df['index'] = counts.index
@@ -162,31 +167,44 @@ def write_counts_sampled(item, control_insts_per_time_sampled, comp_insts, count
     with open(os.path.join(output_folder,f"{item}"),'w') as f:
         for i,control_insts in enumerate(control_insts_per_time_sampled):
             # write compound to design matrix
-            for (inst_id, pert_time) in comp_insts:
+            for (inst_id, pert_time, rna_plate) in comp_insts:
                 inst_id_fixed = '.'.join(inst_id.split(':'))
-                f.write(f"{inst_id_fixed}\tcp\t{pert_time}\t{i}\n")
+                f.write(f"{inst_id_fixed}\tcp\t{pert_time}\t{rna_plate}\t{i}\n")
                 counts_df[inst_id_fixed] = counts[inst_id]
             # write control to design matrix
-            for (inst_id, pert_time) in control_insts:
+            for (inst_id, pert_time, rna_plate) in control_insts:
                 inst_id_fixed = '.'.join(inst_id.split(':'))
-                f.write(f"{inst_id_fixed}\tcontrol\t{pert_time}\t{i}\n")
+                f.write(f"{inst_id_fixed}\tcontrol\t{pert_time}\t{rna_plate}\t{i}\n")
                 counts_df[inst_id_fixed] = counts[inst_id]
         # write counts
         counts_df['index'] = counts.index
         counts_df = counts_df.set_index('index')
         counts_df.to_csv(os.path.join(output_folder, f"{item}_counts.csv"), sep = '\t', header = True)
 
-def save_counts(counts, comp_items, control_items, control_select_type, sample_num, output_folder):
+def save_counts(counts,
+            comp_items,
+            control_items,
+            control_select_type,
+            sample_num,
+            output_folder):
     for item in comp_items:
         comp_insts = comp_items[item]
         control_insts = control_items[item]
         # select controls based on type and write design matrices and counts
         if control_select_type == 1:
-            write_counts(item, control_insts, comp_insts, counts, output_folder)
+            write_counts(item,
+                control_insts,
+                comp_insts,
+                counts,
+                output_folder)
         elif control_select_type == 2:
             # get random sample for controls of the same length or less
             control_insts_per_time_sampled = random_sample_controls(control_insts, comp_insts, sample_num)
-            write_counts_sampled(item, control_insts_per_time_sampled, comp_insts, counts, output_folder)
+            write_counts_sampled(item,
+                control_insts_per_time_sampled,
+                comp_insts,
+                counts,
+                output_folder)
         else:
             sys.exit("Unknown control_select_type")
 
@@ -246,7 +264,7 @@ print(f"Number of compound instances: {len(comp_items)}")
 
 # filter compounds with more than 2 time conditions
 comp_items_filtered = filter_samples(comp_items, args.samples_per_time)
-control_items = get_controls(comp_items_filtered, compounds, controls, counts)
+control_items = get_controls(comp_items_filtered, controls, counts)
 control_items_filtered = filter_samples(control_items, args.samples_per_time)
 
 # get compounds with DMSO on the same rna plate
@@ -262,9 +280,8 @@ save_counts_parallel(args.data,
     args.output)
 
 comp_items_df = pd.DataFrame(columns = ['comp_ids', 'pert_id', 'pert_iname', 'cell_id', 'pert_dose'])
-
 for item in comp_items_selected:
     pert_id, cell_id, pert_dose = item.split('_')
-    pert_name = list(inst_info[inst_info['pert_id'] == pert_id]['pert_iname'])[0]
+    pert_iname = list(inst_info[inst_info['pert_id'] == pert_id]['pert_iname'])[0]
     comp_items_df = comp_items_df.append(pd.DataFrame([[item, pert_id, pert_iname, cell_id, pert_dose]], columns  = comp_items_df.columns))
 comp_items_df.to_csv(os.path.join(args.output, f"comp_ids.csv"), sep = '\t', header = True)

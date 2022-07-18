@@ -3,6 +3,7 @@ library(optparse)
 library(foreach)
 library(doParallel)
 library(Hobotnica)
+library(edgeR)
 
 get_H<-function(signature_matrix, trt, sig_length)
 {
@@ -68,7 +69,7 @@ pvalues <- c()
 for (file in compound_sigs$signature_filenames)
 {
 	sig_df <- read.csv(paste0(opt$input, '/', file), sep = '\t')
-	sig <- sig1$gene_name
+	sig <- sig_df$gene_name
 	sig_length <- length(sig)
 	if (sig_length < 2)
 	{
@@ -91,7 +92,7 @@ for (file in compound_sigs$signature_filenames)
 }
 
 df_res <- data.frame(signatures, H_scores, pvalues)
-write.table(df_res, paste0(opt$output,'_sig_H_scores.csv', sep = '\t',  quote = F,  row.names = F)
+write.table(df_res, paste0(opt$output,'_sig_H_scores.csv'), sep = '\t',  quote = F,  row.names = F)
 
 #### Get H-scores for all signatures ####
 
@@ -100,7 +101,7 @@ H_scores <- c()
 for (file in summary$signature_filenames)
 {
 	sig_df <- read.csv(paste0(opt$input, '/', file), sep = '\t')
-	sig <- sig1$gene_name
+	sig <- sig_df$gene_name
 	sig_length <- length(sig)
 	if (sig_length < 2)
 	{
@@ -121,4 +122,4 @@ for (file in summary$signature_filenames)
 }
 
 df_res <- data.frame(signatures, H_scores)
-write.table(df_res, paste0(opt$output,'_all_H_scores.csv', sep = '\t',  quote = F,  row.names = F)
+write.table(df_res, paste0(opt$output,'_all_H_scores.csv'), sep = '\t',  quote = F,  row.names = F)

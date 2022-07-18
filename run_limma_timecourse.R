@@ -3,7 +3,6 @@ library(optparse)
 library("limma")
 library(foreach)
 library(doParallel)
-
 option_list = list(
     make_option(c("-i", "--input"), type="character", default=NULL,
         help="Input directory with counts", metavar="character"),
@@ -35,15 +34,8 @@ if (is.null(opt$output)){
 registerDoParallel(opt$cores)
 comp_ids <- read.csv(paste0(opt$input,"/","comp_ids.csv"), header = T, sep = '\t')
 ids <- as.vector(comp_ids$comp_ids)
-gene_info <- read.csv(paste0(opt$data,"/", "GSE92742_Broad_LINCS_gene_info.txt", sep = '\t')
+gene_info <- read.csv(paste0(opt$data,"/", "GSE92742_Broad_LINCS_gene_info.txt"), sep = '\t')
 rownames(gene_info) <- gene_info$pr_gene_id 
-signature_filenames <- c()
-comp_ids <- c()
-pert_id <- c()
-pert_iname <- c()
-cell_id <- c()
-pert_dose <- c()
-
 foreach(i = 1:length(ids), .combine = "c") %dopar% 
 {
 	f <- ids[i]
@@ -53,10 +45,10 @@ foreach(i = 1:length(ids), .combine = "c") %dopar%
 	pert_dose <- as.vector(comp_ids$pert_dose)[i]
 	design_table <- read.table(paste0(opt$input,"/",f), header = F, sep = '\t')
 	counts_table <- read.table(paste0(opt$input,"/",f,"_counts.csv"), header = T, sep = '\t', row.names = 1)
-	sample_num <- unique(design_table$V4)
+	sample_num <- unique(design_table$V5)
 	for (j in sample_num)
 	{
-		design_table_sample <- design_table[design_table$V4 == j,]
+		design_table_sample <- design_table[design_table$V5 == j,]
 		if (dim(design_table_sample)[1] == 0) {
 			next
 		}
@@ -65,8 +57,11 @@ foreach(i = 1:length(ids), .combine = "c") %dopar%
 		counts_table_norm <- normalizeBetweenArrays(counts_table_sample, method="quantile")
 		treatment <- design_table_sample$V2
 		time <- design_table_sample$V3
+		batch<- design_table_sample$V4
 		design <- model.matrix(~0+treatment+treatment:time)
-		colnames(design) <- c("treatmentcontrol", "treatmentcp", "treatmentcontrol_time", "treatmentcp_time")
+		columns_num <- dim(design)[2]
+		colnames(design)[columns_num] <- "treatmentcp_time"
+		colnames(design)[columns_num-1] <- "treatmentcontrol_time"
 		contrast <- makeContrasts(treatmentcontrol_time - treatmentcp_time, levels=colnames(design))
 		fit <- lmFit(counts_table_norm, design)
 		fit2 <- contrasts.fit(fit, contrast)
@@ -76,15 +71,26 @@ foreach(i = 1:length(ids), .combine = "c") %dopar%
 		result$gene_name <- gene_info[rownames(result),]$pr_gene_symbol
 		signature_filename <- paste0(f, "_limma_de_sample_controls_",j,".csv")
 		write.table(result, paste0(opt$output,"/", signature_filename), sep = '\t',  quote = F,  row.names = T)
-		signature_filenames <- c(signature_filenames, signature_filename)
-		as.vector(comp_ids$comp_ids)
-		comp_ids <- c(comp_ids, f)
-		pert_ids <- c(pert_ids, pert_id)
-		pert_inames <- c(pert_inames, pert_iname)
-		cell_ids <- c(cell_ids, cell_id)
-		pert_doses <- c(pert_doses, pert_dose)
 	}
 }
 
-summary <- data.frame(signature_filenames, comp_ids, pert_ids, pert_inames, cell_ids, pert_doses)
-write.table(result, paste0(opt$output,"/summary.csv"), sep = '\t',  quote = F,  row.names = T)
+signature_filenames_column  <- c()
+comp_ids_column <- c()
+pert_inames_column <- c()
+for(i in 1:length(ids))
+{
+	f <- ids[i]
+	pert_iname <- as.vector(comp_ids$pert_iname)[i]
+	design_table <- read.table(paste0("counts1","/",f), header = F, sep = '\t')
+	sample_num <- unique(design_table$V5)
+	for (j in sample_num)
+	{
+		signature_filename <- paste0(f, "_limma_de_sample_controls_",j,".csv")
+		signature_filenames_column  <- c(signature_filenames_column,signature_filename)
+		comp_ids_column <- c(comp_ids_column, f)
+		pert_inames_column <- c(pert_inames_column, pert_iname)
+	}
+}
+summary <- data.frame(signature_filenames_column, comp_ids_column, pert_inames_column)
+colnames(summary) <- c("signature_filenames", "comp_ids", "pert_inames")
+write.table(summary, paste0(opt$output,"/summary.csv"), sep = '\t',  quote = F,  row.names = T)
